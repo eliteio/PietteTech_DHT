@@ -64,6 +64,7 @@ const int  DHTLIB_ERROR_DELTA            = -6;
 const int  DHTLIB_ERROR_NOTSTARTED       = -7;
 
 #define DHT_CHECK_STATE                    \
+        detachISRIfRequested();            \
         if(_state == STOPPED)              \
             return _status;			           \
         else if(_state != ACQUIRED)		     \
@@ -104,6 +105,7 @@ public:
 private:
   void _isrCallback();
   void convert();
+  void detachISRIfRequested();
 
   enum states { RESPONSE = 0, DATA = 1, ACQUIRED = 2, STOPPED = 3, ACQUIRING = 4 };
   volatile states _state;
@@ -113,6 +115,7 @@ private:
   volatile uint8_t _idx;
   volatile unsigned long _us;
   volatile bool _convert;
+  volatile bool _detachISR;
 #if defined(DHT_DEBUG_TIMING)
   volatile uint8_t *_e;
 #endif

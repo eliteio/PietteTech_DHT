@@ -86,6 +86,7 @@ void PietteTech_DHT::begin() {
   _lastreadtime = 0;
   _state = STOPPED;
   _status = DHTLIB_ERROR_NOTSTARTED;
+  _detachISR = false;
   pinMode(_sigPin, OUTPUT);
   digitalWrite(_sigPin, HIGH);
 }
@@ -146,6 +147,7 @@ int PietteTech_DHT::acquire() {
      * starts to send us data
      */
     _us = micros();
+    _detachISR = false;
     attachInterrupt(_sigPin, &PietteTech_DHT::_isrCallback, this, FALLING);
 
     return DHTLIB_ACQUIRING;
@@ -172,6 +174,17 @@ int PietteTech_DHT::acquireAndWait(uint32_t timeout) {
 void PietteTech_DHT::isrCallback() { }
 
 void PietteTech_DHT::_isrCallback() {
+  if (_detachISR) {
+    /*
+     * NOTE:  We can't call detachInterrupt() inside the ISR (c.f. https://github.com/particle-iot/device-os/issues/1835)
+     *        so we'll set _detachISR inside the ISR when we're done
+     *        and count on code on the main thread to detach it via detachISRIfRequested().
+     *        Getting another interrupt after we've already requested a detach is benign
+     *        so we'll just ignore this interrupt and return.
+     */
+    return;
+  }
+
   unsigned long newUs = micros();
   unsigned long delta = (newUs - _us);
   _us = newUs;
@@ -179,7 +192,7 @@ void PietteTech_DHT::_isrCallback() {
   if (delta > 6000) {
     _status = DHTLIB_ERROR_ISR_TIMEOUT;
     _state = STOPPED;
-    detachInterrupt(_sigPin);
+    _detachISR = true;
     return;
   }
   switch (_state) {
@@ -199,7 +212,7 @@ void PietteTech_DHT::_isrCallback() {
       _state = DATA;
     }
     else {
-      detachInterrupt(_sigPin);
+      _detachISR = true;
       _status = DHTLIB_ERROR_RESPONSE_TIMEOUT;
       _state = STOPPED;
 #if defined(DHT_DEBUG_TIMING)
@@ -218,7 +231,7 @@ void PietteTech_DHT::_isrCallback() {
       if (_cnt == 0) { // we have completed the byte, go to next
         _cnt = 7; // restart at MSB
         if (++_idx == 5) { // go to next byte, if we have got 5 bytes stop.
-          detachInterrupt(_sigPin);
+          _detachISR = true;
           // Verify checksum
           uint8_t sum = _bits[0] + _bits[1] + _bits[2] + _bits[3];
           if (_bits[4] != sum) {
@@ -236,12 +249,12 @@ void PietteTech_DHT::_isrCallback() {
       else _cnt--;
     }
     else if (delta < 10) {
-      detachInterrupt(_sigPin);
+      _detachISR = true;
       _status = DHTLIB_ERROR_DELTA;
       _state = STOPPED;
     }
     else {
-      detachInterrupt(_sigPin);
+      _detachISR = true;
       _status = DHTLIB_ERROR_DATA_TIMEOUT;
       _state = STOPPED;
     }
@@ -269,6 +282,13 @@ void PietteTech_DHT::convert() {
   _convert = false;
 }
 
+void PietteTech_DHT::detachISRIfRequested() {
+  if (_detachISR) {
+    detachInterrupt(_sigPin);
+    _detachISR = false;
+  }
+}
+
 bool PietteTech_DHT::acquiring() {
   if (_state != ACQUIRED && _state != STOPPED)
     return true;
@@ -276,6 +296,7 @@ bool PietteTech_DHT::acquiring() {
 }
 
 int PietteTech_DHT::getStatus() {
+  detachISRIfRequested();
   return _status;
 }
 
